@@ -338,8 +338,11 @@ async function seed() {
     create: {
       id: "demo-quiz-invitational-2026",
       title: "Inter-College Invitational Trivia Cup 2026",
-      description: "Annual multi-round general knowledge & pop culture tournament.",
-      status: "COMPLETED",
+      date: new Date("2026-10-15T10:00:00Z"),
+      academicYear: "2026-2027",
+      venueOrPlatform: "Main Auditorium, Campus Center",
+      format: "Written Prelims + On-Stage Finals",
+      mode: "IN_PERSON",
       createdById: demoAdmin.id,
       qms: {
         create: { userId: demoQm.id },
@@ -354,8 +357,11 @@ async function seed() {
     create: {
       id: "demo-quiz-championship-2026",
       title: "Science, Cinema & Pop Culture Championship",
-      description: "Main season tournament featuring team registration desk and running order.",
-      status: "CONFIRMED",
+      date: new Date("2026-11-20T14:00:00Z"),
+      academicYear: "2026-2027",
+      venueOrPlatform: "Seminar Hall B",
+      format: "Buzzer Round + Infinite Bounce",
+      mode: "IN_PERSON",
       createdById: demoQm.id,
       qms: {
         create: { userId: demoQm.id },
@@ -388,11 +394,13 @@ async function seed() {
     });
 
     for (const m of t.members) {
+      const pId = `demo-p-${m.toLowerCase().replace(/[^a-z0-9]/g, "")}`;
       const email = `${m.toLowerCase().replace(/[^a-z0-9]/g, "")}@example.com`;
       const participant = await prisma.participant.upsert({
-        where: { email },
+        where: { id: pId },
         update: {},
         create: {
+          id: pId,
           name: m,
           email,
           college: "Tech & Arts Institute",
@@ -424,3 +432,4 @@ seed()
   .finally(async () => {
     await prisma.$disconnect();
   });
+
