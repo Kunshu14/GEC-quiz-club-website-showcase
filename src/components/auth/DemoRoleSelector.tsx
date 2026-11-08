@@ -33,7 +33,7 @@ export function DemoRoleSelector({ onSelectRole, onGoogleSignIn }: DemoRoleSelec
               1-Click Interactive Showcase
             </span>
           </div>
-          <Tag tone="green" className="font-mono text-xs">Recruiter Access</Tag>
+          <Tag tone="mint" className="font-mono text-xs">Recruiter Access</Tag>
         </div>
 
         <p className="mt-3 font-body text-xs sm:text-sm text-ink/80 leading-relaxed">
@@ -127,7 +127,7 @@ export function DemoRoleSelector({ onSelectRole, onGoogleSignIn }: DemoRoleSelec
           type="button"
           onClick={handleGoogleClick}
           disabled={isPending}
-          variant="secondary"
+          variant="alt"
           className="text-xs py-1.5 px-4"
         >
           Sign in with Google

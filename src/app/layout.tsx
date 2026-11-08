@@ -22,7 +22,11 @@ export const metadata: Metadata = {
   description: "Full-stack tournament management, quiz building, roster desk, and scoring system.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html
       lang="en"
