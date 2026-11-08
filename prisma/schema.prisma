@@ -1,0 +1,610 @@
+// Prisma schema — GEC Quiz Club Council Website
+// Phase 1.5: Role & Permission System (RBAC) + Phase 2 foundations.
+//
+// Naming convention: Prisma model/field names stay idiomatic camelCase/PascalCase,
+// but every table/column/enum is explicitly @map'd to snake_case matching
+// the master prompt's Section 6 pseudocode.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ─── Enums ─────────────────────────────────────────────────────────────
+
+enum UserStatus {
+  ACTIVE
+  ALUMNI
+  REVOKED
+
+  @@map("user_status")
+}
+
+enum AccessRequestStatus {
+  PENDING
+  INVITED
+  APPROVED
+  DENIED
+
+  @@map("access_request_status")
+}
+
+enum DraftStatus {
+  IN_PROGRESS
+  INTERRUPTED
+
+  @@map("draft_status")
+}
+
+// Phase 2: Question difficulty levels.
+enum QuestionDifficulty {
+  EASY
+  MEDIUM
+  HARD
+
+  @@map("question_difficulty")
+}
+
+// Phase 2/3: Question review status.
+enum QuestionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  FLAGGED
+
+  @@map("question_status")
+}
+
+enum QuestionAuditAction {
+  APPROVED
+  REJECTED
+  EDITED_BY_ADMIN
+  EDITED_BY_AUTHOR
+
+  @@map("question_audit_action")
+}
+
+enum MediaRole {
+  QUESTION
+  ANSWER
+
+  @@map("media_role")
+}
+
+enum MediaType {
+  IMAGE
+  AUDIO
+  VIDEO
+
+  @@map("media_type")
+}
+
+// ─── RBAC: Roles & Permissions ─────────────────────────────────────────
+
+// Named positions in the council (President, Vice President, etc.)
+// plus a generic "Member" catch-all and a dev/maintenance "Admin" role.
+// `isSystem` prevents deletion/renaming of seeded roles via the Admin UI.
+model Role {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  isSystem  Boolean  @default(false) @map("is_system")
+  sortOrder Int      @default(999) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  users          User[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+// Discrete permission keys. Seeded once, not user-editable.
+model Permission {
+  id          String @id @default(cuid())
+  key         String @unique
+  label       String
+  description String
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+// Many-to-many join: which permissions does each role have?
+model RolePermission {
+  roleId       String     @map("role_id")
+  permissionId String     @map("permission_id")
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+// ─── Users ─────────────────────────────────────────────────────────────
+
+// Section 6: USERS id, name, email, role_id(FK→roles), status(active/alumni/revoked),
+// linked_participant_id?
+//
+// `linkedParticipantId` has no FK yet — the `participants` table doesn't
+// exist until Phase 8. It's a plain nullable column for now per Section 6.
+//
+// `wasAdmin` tracks whether the user ever held a role with `manage_users`
+// permission, so reinstating Admins can surface the "previously an Admin"
+// note (Section 5.6). Sticky boolean, never unset.
+model User {
+  id                  String     @id @default(cuid())
+  name                String?
+  email               String     @unique
+  roleId              String     @map("role_id")
+  role                Role       @relation(fields: [roleId], references: [id])
+  status              UserStatus @default(ACTIVE)
+  linkedParticipantId String?      @map("linked_participant_id")
+  linkedParticipant   Participant? @relation(fields: [linkedParticipantId], references: [id], onDelete: SetNull)
+  wasAdmin            Boolean      @default(false) @map("was_admin")
+  graduatingYear      Int?         @map("graduating_year")
+  createdAt           DateTime     @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
+
+  decidedAccessRequests AccessRequest[] @relation("DecidedBy")
+  drafts                Draft[]
+  submittedQuestions    Question[]      @relation("SubmittedBy")
+  editedQuestions       Question[]      @relation("EditedBy")
+  uploadedMedia         QuestionMedia[]
+  quizzesCreated        Quiz[]          @relation("QuizCreatedBy")
+  quizzesQm             QuizQm[]        @relation("QuizQmUser")
+  quizzesScorekeeper    QuizScorekeeper[] @relation("QuizScorekeeperUser")
+  notifications         Notification[]
+  questionAuditLogs     QuestionAuditLog[] @relation("QuestionAuditActor")
+
+  @@map("users")
+}
+
+// ─── Access Requests ───────────────────────────────────────────────────
+
+// Section 5.1 / Section 6: ACCESS_REQUESTS email, note?, status(pending |
+// invited | approved | denied), requested_at, decided_by, decided_at.
+//
+// This is a log, not one row per email — every request (approved, denied,
+// invited, pending) is its own row. Denial history is never overwritten
+// (Section 5.1) — the app must only ever INSERT here, never UPDATE an
+// existing row's status in place.
+model AccessRequest {
+  id          String              @id @default(cuid())
+  email       String
+  note        String?
+  status      AccessRequestStatus
+  requestedAt DateTime            @default(now()) @map("requested_at")
+  decidedById String?             @map("decided_by")
+  decidedBy   User?               @relation("DecidedBy", fields: [decidedById], references: [id])
+  decidedAt   DateTime?           @map("decided_at")
+
+  @@map("access_requests")
+  @@index([email])
+  @@index([status])
+}
+
+// ─── Drafts ────────────────────────────────────────────────────────────
+
+// Server-backed cross-device draft store for saving work in progress,
+// including auto-saving interrupted work on sign-out across tabs/devices.
+model Draft {
+  id        String      @id @default(cuid())
+  userId    String      @map("user_id")
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String
+  data      Json
+  status    DraftStatus @default(IN_PROGRESS)
+  createdAt DateTime    @default(now()) @map("created_at")
+  updatedAt DateTime    @updatedAt @map("updated_at")
+
+  @@unique([userId, type])
+  @@map("drafts")
+}
+
+// ─── Phase 2 & 3: Questions, Categories & Media ────────────────────────
+
+// Section 6: CATEGORIES id, name — fixed list, admin-managed dropdown.
+model Category {
+  id   String @id @default(cuid())
+  name String @unique
+
+  questionCategories QuestionCategory[]
+  themeCategories    ThemeCategory[]
+
+  @@map("categories")
+}
+
+// Section 6: QUESTIONS id, text, answer_text, difficulty, notes,
+// submitted_by(FK Users), status(pending/approved/rejected/flagged), created_at.
+// Phase 3: duplicate_of_id, duplicate_score, question_media.
+// Phase 4: usage_log
+model Question {
+  id             String             @id @default(cuid())
+  text           String
+  answerText     String             @map("answer_text")
+  difficulty     QuestionDifficulty
+  notes          String?
+  status         QuestionStatus     @default(PENDING)
+  submittedById  String             @map("submitted_by")
+  submittedBy    User               @relation("SubmittedBy", fields: [submittedById], references: [id])
+  createdAt      DateTime           @default(now()) @map("created_at")
+  updatedAt      DateTime           @updatedAt @map("updated_at")
+
+  // Phase 3: Duplicate tracking
+  duplicateOfId  String?            @map("duplicate_of_id")
+  duplicateOf    Question?          @relation("QuestionDuplicates", fields: [duplicateOfId], references: [id], onDelete: SetNull)
+  duplicates     Question[]         @relation("QuestionDuplicates")
+  duplicateScore Float?             @map("duplicate_score")
+
+  // Submitter Transparency: Track edits by council admins
+  lastEditedById String?            @map("last_edited_by")
+  lastEditedBy   User?              @relation("EditedBy", fields: [lastEditedById], references: [id], onDelete: SetNull)
+  lastEditedAt   DateTime?          @map("last_edited_at")
+
+  // Post-approval change tracking
+  isEditedAfterApproval Boolean   @default(false) @map("is_edited_after_approval")
+  editedAfterApprovalAt DateTime? @map("edited_after_approval_at")
+
+  questionCategories QuestionCategory[]
+  media              QuestionMedia[]
+  usageLogs          UsageLog[]
+  auditLogs          QuestionAuditLog[]
+
+  @@map("questions")
+  @@index([status])
+  @@index([difficulty])
+  @@index([submittedById])
+  @@index([duplicateOfId])
+  @@index([lastEditedById])
+  @@index([isEditedAfterApproval])
+}
+
+// Track reviews, approvals, rejections, and post-approval edits
+model QuestionAuditLog {
+  id             String              @id @default(cuid())
+  questionId     String              @map("question_id")
+  question       Question            @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  actorId        String              @map("actor_id")
+  actor          User                @relation("QuestionAuditActor", fields: [actorId], references: [id], onDelete: Cascade)
+  action         QuestionAuditAction
+  notes          String?
+  previousStatus QuestionStatus?     @map("previous_status")
+  newStatus      QuestionStatus?     @map("new_status")
+  createdAt      DateTime            @default(now()) @map("created_at")
+
+  @@index([questionId])
+  @@index([actorId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("question_audit_logs")
+}
+
+// Section 6: QUESTION_MEDIA question_id, role(question/answer), type(image/audio/video), url, uploaded_by
+model QuestionMedia {
+  id           String    @id @default(cuid())
+  questionId   String    @map("question_id")
+  role         MediaRole
+  type         MediaType
+  url          String
+  uploadedById String    @map("uploaded_by")
+  createdAt    DateTime  @default(now()) @map("created_at")
+
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  uploadedBy User     @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([questionId])
+  @@map("question_media")
+}
+
+// Section 6: QUESTION_CATEGORIES question_id, category_id, sub_genre(text, optional).
+// Many-to-many join between Questions and Categories.
+model QuestionCategory {
+  questionId String   @map("question_id")
+  categoryId String   @map("category_id")
+  question   Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  subGenre   String?  @map("sub_genre")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@id([questionId, categoryId])
+  @@map("question_categories")
+  @@index([categoryId])
+}
+
+// ─── Phase 4: Quizzes, Themes & Running Orders ────────────────────────
+
+enum QuizMode {
+  IN_PERSON
+  ONLINE
+  HYBRID
+
+  @@map("quiz_mode")
+}
+
+// Section 6: QUIZ_THEMES id, name (e.g. "MELA")
+model QuizTheme {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  themeCategories ThemeCategory[]
+  quizzes         Quiz[]
+
+  @@map("quiz_themes")
+}
+
+// Section 6: THEME_CATEGORIES theme_id, category_id
+// Many-to-many join linking combo themes (e.g. MELA) to atomic Categories
+model ThemeCategory {
+  themeId    String    @map("theme_id")
+  categoryId String    @map("category_id")
+  theme      QuizTheme @relation(fields: [themeId], references: [id], onDelete: Cascade)
+  category   Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@id([themeId, categoryId])
+  @@index([categoryId])
+  @@map("theme_categories")
+}
+
+// Section 6: QUIZZES id, title, date, format, mode(in-person/online/hybrid),
+// theme_id?, academic_year, venue_or_platform, timing, budget, lessons_learned
+model Quiz {
+  id              String     @id @default(cuid())
+  title           String
+  date            DateTime
+  academicYear    String     @map("academic_year")
+  format          String     @default("Written Prelims + On-Stage Finals")
+  mode            QuizMode   @default(IN_PERSON)
+  themeId         String?    @map("theme_id")
+  theme           QuizTheme? @relation(fields: [themeId], references: [id], onDelete: SetNull)
+  venueOrPlatform String     @map("venue_or_platform")
+  timing          String?
+  budget          Decimal    @default(0) @db.Decimal(10, 2) @map("budget")
+  lessonsLearned  String?    @map("lessons_learned")
+  roundSettings   Json?      @map("round_settings")
+  createdById     String     @map("created_by")
+  createdBy       User       @relation("QuizCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  qms         QuizQm[]
+  scorekeepers QuizScorekeeper[]
+  usageLogs   UsageLog[]
+  roster      QuizRoster[]
+  scores      Score[]
+  finalRanks  FinalRank[]
+  teamMembers TeamMember[]
+
+  @@index([date])
+  @@index([academicYear])
+  @@index([themeId])
+  @@index([createdById])
+  @@map("quizzes")
+}
+
+// Section 6: QUIZ_QMS quiz_id, user_id (many-to-many, 2-3 QMs per quiz)
+model QuizQm {
+  quizId String @map("quiz_id")
+  userId String @map("user_id")
+  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user   User   @relation("QuizQmUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([quizId, userId])
+  @@index([userId])
+  @@map("quiz_qms")
+}
+
+// Event-level desk scorekeepers (many-to-many, independent from stage QMs)
+model QuizScorekeeper {
+  quizId String @map("quiz_id")
+  userId String @map("user_id")
+  quiz   Quiz   @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user   User   @relation("QuizScorekeeperUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([quizId, userId])
+  @@index([userId])
+  @@map("quiz_scorekeepers")
+}
+
+// Section 6: USAGE_LOG question_id, quiz_id, used_on
+// Phase 4: order_index and round_name for running order tracking
+model UsageLog {
+  id         String   @id @default(cuid())
+  questionId String   @map("question_id")
+  quizId     String   @map("quiz_id")
+  usedOn     DateTime @default(now()) @map("used_on")
+  orderIndex Int      @default(0) @map("order_index")
+  roundName  String?  @map("round_name")
+
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  quiz     Quiz     @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, questionId])
+  @@index([questionId])
+  @@index([quizId, orderIndex])
+  @@map("usage_log")
+}
+
+// ─── Phase 6: Roster, Team Members, Scores & Rankings ──────────────────
+
+enum RosterStatus {
+  CONFIRMED
+  NO_SHOW
+
+  @@map("roster_status")
+}
+
+enum ScoreStatus {
+  ACTIVE
+  ELIMINATED
+  ADVANCED
+
+  @@map("score_status")
+}
+
+// Section 6: PARTICIPANTS id, name, email
+model Participant {
+  id        String   @id @default(cuid())
+  name      String
+  email     String?
+  college   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  teamMembers TeamMember[]
+  users       User[]
+
+  @@index([name])
+  @@index([email])
+  @@map("participants")
+}
+
+// Section 6: QUIZ_ROSTER quiz_id, seat_no(nullable), team_name, status(confirmed/no_show)
+model QuizRoster {
+  id        String       @id @default(cuid())
+  quizId    String       @map("quiz_id")
+  seatNo    Int?         @map("seat_no")
+  teamName  String       @map("team_name")
+  status    RosterStatus @default(CONFIRMED)
+  createdAt DateTime     @default(now()) @map("created_at")
+  updatedAt DateTime     @updatedAt @map("updated_at")
+
+  quiz        Quiz         @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  teamMembers TeamMember[]
+  scores      Score[]
+  finalRank   FinalRank?
+
+  @@unique([quizId, seatNo])
+  @@index([quizId])
+  @@index([status])
+  @@map("quiz_roster")
+}
+
+// Section 6: TEAM_MEMBERS quiz_id, seat_no, participant_id -- unique(quiz_id, participant_id)
+model TeamMember {
+  id            String   @id @default(cuid())
+  quizId        String   @map("quiz_id")
+  rosterId      String   @map("roster_id")
+  participantId String   @map("participant_id")
+  seatNo        Int?     @map("seat_no")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  quiz        Quiz        @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  roster      QuizRoster  @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, participantId])
+  @@index([rosterId])
+  @@index([participantId])
+  @@map("team_members")
+}
+
+// Section 6: SCORES quiz_id, seat_no, round_label, points, status(active/eliminated/advanced)
+model Score {
+  id         String      @id @default(cuid())
+  quizId     String      @map("quiz_id")
+  rosterId   String      @map("roster_id")
+  seatNo     Int         @map("seat_no")
+  roundLabel     String      @map("round_label")
+  points         Decimal     @default(0) @db.Decimal(8, 2)
+  questionScores Json?       @map("question_scores")
+  status         ScoreStatus @default(ACTIVE)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  quiz   Quiz       @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  roster QuizRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, seatNo, roundLabel])
+  @@index([quizId, roundLabel])
+  @@index([rosterId])
+  @@map("scores")
+}
+
+// Section 6: FINAL_RANK quiz_id, seat_no, final_rank(unique per quiz), total_points?
+model FinalRank {
+  id          String   @id @default(cuid())
+  quizId      String   @map("quiz_id")
+  rosterId    String   @unique @map("roster_id")
+  seatNo      Int      @map("seat_no")
+  rank        Int
+  totalPoints Decimal? @db.Decimal(10, 2) @map("total_points")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  quiz   Quiz       @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  roster QuizRoster @relation(fields: [rosterId], references: [id], onDelete: Cascade)
+
+  @@unique([quizId, rank])
+  @@unique([quizId, seatNo])
+  @@index([quizId])
+  @@map("final_rank")
+}
+
+// ─── Phase 9: Notifications & Background Jobs ──────────────────────────
+
+enum NotificationType {
+  SUBMISSION_AWAITING_REVIEW
+  SUBMISSION_APPROVED
+  SUBMISSION_REJECTED
+  QUIZ_SCHEDULED
+  QUIZ_REMINDER
+  LEADERBOARD_UPDATE
+  SYSTEM
+
+  @@map("notification_type")
+}
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String           @map("user_id")
+  type      NotificationType
+  title     String
+  message   String
+  linkUrl   String?          @map("link_url")
+  read      Boolean          @default(false)
+  createdAt DateTime         @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, read])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+enum JobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+
+  @@map("job_status")
+}
+
+model JobQueue {
+  id          String    @id @default(cuid())
+  type        String
+  payload     Json
+  status      JobStatus @default(PENDING)
+  attempts    Int       @default(0)
+  maxAttempts Int       @default(3) @map("max_attempts")
+  error       String?
+  runAt       DateTime  @default(now()) @map("run_at")
+  processedAt DateTime? @map("processed_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([status, runAt])
+  @@map("job_queue")
+}
+
+
+

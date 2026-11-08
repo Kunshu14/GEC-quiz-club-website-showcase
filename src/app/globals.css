@@ -1,0 +1,91 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------- */
+/* Design tokens — Master Build Prompt Section 3.1                         */
+/* "Nerdy on Purpose" (v3): bold sticker-and-marquee zine, not a SaaS UI.  */
+/* ---------------------------------------------------------------------- */
+:root {
+  --ink: #141119; /* text, borders, buttons, footer bg */
+  --cream: #fbf3e2; /* base background, card fill */
+  --pink: #ff3d8a; /* primary accent */
+  --yellow: #ffd400; /* secondary accent */
+  --mint: #4fe3b3; /* tertiary accent */
+  --lavender: #c9b8ff; /* supporting accent */
+  --orange: #ff7a3d; /* supporting accent */
+  --purple: #3b1f5e; /* dark section background */
+
+  /* Signature shape/shadow system — Section 3.3 */
+  --border-width: 3px;
+  --shadow-sm: 4px 4px 0 var(--ink);
+  --shadow-md: 6px 6px 0 var(--ink);
+  --shadow-lg: 8px 8px 0 var(--ink);
+}
+
+@theme inline {
+  --color-ink: var(--ink);
+  --color-cream: var(--cream);
+  --color-pink: var(--pink);
+  --color-yellow: var(--yellow);
+  --color-mint: var(--mint);
+  --color-lavender: var(--lavender);
+  --color-orange: var(--orange);
+  --color-purple: var(--purple);
+
+  --font-display: var(--font-display);
+  --font-body: var(--font-body);
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+}
+
+/* No dark-mode media query: this system is a deliberate, single-mode
+   flat-color palette (Section 3.1) — it does not adapt to prefers-color-scheme. */
+
+html,
+body {
+  background: var(--cream);
+  color: var(--ink);
+}
+
+body {
+  font-family: var(--font-body), sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: -0.5px;
+  line-height: 1.05;
+  text-transform: none;
+}
+
+/* Flat corners everywhere except explicit circles (Section 3.8 rule 5).
+   Lives in Tailwind's base layer so a utility like rounded-full still wins. */
+@layer base {
+  * {
+    border-radius: 0;
+  }
+}
+
+/* Marquee/ticker strip animation — Section 3.4 */
+@keyframes marquee-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  animation: marquee-scroll 22s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee {
+    animation: none;
+  }
+}
+
