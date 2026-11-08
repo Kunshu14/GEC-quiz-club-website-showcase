@@ -24,11 +24,6 @@ export default async function HomePage({ searchParams }: HomePageProps) {
     await signIn("demo-login", { role, redirectTo: "/dashboard" });
   }
 
-  async function handleGoogleSignIn() {
-    "use server";
-    await signIn("google", { redirectTo: "/dashboard" });
-  }
-
   return (
     <div className="flex min-h-screen flex-col bg-cream/40">
       {/* Top Portfolio Notice */}
@@ -62,10 +57,7 @@ export default async function HomePage({ searchParams }: HomePageProps) {
         </div>
 
         {/* 1-Click Showcase Authentication */}
-        <DemoRoleSelector
-          onSelectRole={handleDemoSignIn}
-          onGoogleSignIn={handleGoogleSignIn}
-        />
+        <DemoRoleSelector onSelectRole={handleDemoSignIn} />
       </main>
     </div>
   );

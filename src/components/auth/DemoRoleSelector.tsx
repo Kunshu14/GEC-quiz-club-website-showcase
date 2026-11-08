@@ -5,21 +5,14 @@ import { Button, CardShell, HighlighterMark, Tag } from "@/components/ui";
 
 interface DemoRoleSelectorProps {
   onSelectRole: (role: "admin" | "quizmaster" | "member") => Promise<void>;
-  onGoogleSignIn: () => Promise<void>;
 }
 
-export function DemoRoleSelector({ onSelectRole, onGoogleSignIn }: DemoRoleSelectorProps) {
+export function DemoRoleSelector({ onSelectRole }: DemoRoleSelectorProps) {
   const [isPending, startTransition] = useTransition();
 
   const handleRoleClick = (role: "admin" | "quizmaster" | "member") => {
     startTransition(async () => {
       await onSelectRole(role);
-    });
-  };
-
-  const handleGoogleClick = () => {
-    startTransition(async () => {
-      await onGoogleSignIn();
     });
   };
 
@@ -117,22 +110,6 @@ export function DemoRoleSelector({ onSelectRole, onGoogleSignIn }: DemoRoleSelec
           </div>
         )}
       </CardShell>
-
-      {/* Alternative Google Sign-in */}
-      <div className="pt-2 border-t border-ink/20 flex flex-col items-center gap-2">
-        <p className="font-body text-xs text-ink/60">
-          Or test OAuth authentication flow:
-        </p>
-        <Button
-          type="button"
-          onClick={handleGoogleClick}
-          disabled={isPending}
-          variant="alt"
-          className="text-xs py-1.5 px-4"
-        >
-          Sign in with Google
-        </Button>
-      </div>
     </div>
   );
 }
