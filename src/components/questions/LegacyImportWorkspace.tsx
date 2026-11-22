@@ -358,7 +358,7 @@ export function LegacyImportWorkspace() {
 
       {/* Post-Import Result Summary Modal / Panel */}
       {importResult && (
-        <FramedPanel tone="mint" className="p-6 flex flex-col gap-4">
+        <FramedPanel tone="mint" tilt={false} className="w-full p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <h2 className="font-heading text-2xl text-ink flex items-center gap-2">
               <CheckCircleIcon size={24} className="text-forest" />
